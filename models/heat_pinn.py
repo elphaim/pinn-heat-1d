@@ -108,14 +108,7 @@ class HeatPINN(nn.Module):
             
         Returns:
             residual: PDE residual, shape (N, 1)
-        """
-        # Ensure gradients are tracked
-        # Only clone/detach if not already requiring grad
-        if not x.requires_grad:
-            x = x.clone().detach().requires_grad_(True)
-        if not t.requires_grad:
-            t = t.clone().detach().requires_grad_(True)
-        
+        """        
         # Forward pass
         u = self.forward(x, t)
         
