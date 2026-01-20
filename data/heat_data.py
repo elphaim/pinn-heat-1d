@@ -31,9 +31,11 @@ class HeatEquationData:
         T: Final time (default: 1.0)
         alpha: True thermal diffusivity (default: 0.01)
         N_f: Number of collocation points for residual (default: 10000)
+        N_bc: Number of collocation points for boundary conditions (default: 100)
+        N_ic: Number of collocation points for initial conditions (default: 100)
         N_sensors: Number of spatial sensor locations (default: 10)
         N_time_measurements: Number of time measurements per sensor (default: 10)
-        noise_level: Measurement noise std as fraction of signal (default: 0.01 for SNR~20dB)
+        noise_level: Measurement noise std as fraction of signal (default: 0.01 for SNR~40dB)
         device: torch device (default: cpu)
     """
     
@@ -43,6 +45,8 @@ class HeatEquationData:
         T: float = 1.0,
         alpha: float = 0.01,
         N_f: int = 10000,
+        N_bc: int = 100,
+        N_ic: int = 100,
         N_sensors: int = 10,
         N_time_measurements: int = 10,
         noise_level: float = 0.01,
@@ -53,6 +57,8 @@ class HeatEquationData:
         self.T = T
         self.alpha = alpha
         self.N_f = N_f
+        self.N_bc = N_bc
+        self.N_ic = N_ic
         self.N_sensors = N_sensors
         self.N_time_measurements = N_time_measurements
         self.noise_level = noise_level
@@ -66,6 +72,8 @@ class HeatEquationData:
         print(f"  Domain: x ∈ [0, {L}], t ∈ [0, {T}]")
         print(f"  True alpha: {alpha}")
         print(f"  Collocation points: {N_f}")
+        print(f"  Boundary points: {N_bc}")
+        print(f"  Initial condition points: {N_ic}")
         print(f"  Measurements: {N_sensors} sensors × {N_time_measurements} times = {N_sensors * N_time_measurements} total")
         print(f"  Noise level: {noise_level:.1%} (SNR ≈ {-20*np.log10(noise_level):.0f} dB)")
     
@@ -113,12 +121,9 @@ class HeatEquationData:
         
         return x_f.to(self.device), t_f.to(self.device)
     
-    def generate_boundary_conditions(self, N_bc: int = 100) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def generate_boundary_conditions(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Generate boundary condition points: u(0, t) = u(L, t) = 0
-        
-        Args:
-            N_bc: Number of points per boundary
             
         Returns:
             x_bc: Spatial coordinates (at x=0 and x=L)
@@ -126,12 +131,12 @@ class HeatEquationData:
             u_bc: Boundary values (all zeros)
         """
         # Left boundary (x=0)
-        t_left = torch.rand(N_bc, 1) * self.T
-        x_left = torch.zeros(N_bc, 1)
+        t_left = torch.rand(self.N_bc, 1) * self.T
+        x_left = torch.zeros(self.N_bc, 1)
         
         # Right boundary (x=L)
-        t_right = torch.rand(N_bc, 1) * self.T
-        x_right = torch.ones(N_bc, 1) * self.L
+        t_right = torch.rand(self.N_bc, 1) * self.T
+        x_right = torch.ones(self.N_bc, 1) * self.L
         
         # Combine
         x_bc = torch.cat([x_left, x_right], dim=0)
@@ -140,20 +145,17 @@ class HeatEquationData:
         
         return x_bc.to(self.device), t_bc.to(self.device), u_bc.to(self.device)
     
-    def generate_initial_conditions(self, N_ic: int = 100) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def generate_initial_conditions(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Generate initial condition points: u(x, 0) = sin(π*x)
-        
-        Args:
-            N_ic: Number of initial condition points
             
         Returns:
             x_ic: Spatial coordinates
             t_ic: Temporal coordinates (all zeros)
             u_ic: Initial values
         """
-        x_ic = torch.rand(N_ic, 1) * self.L
-        t_ic = torch.zeros(N_ic, 1)
+        x_ic = torch.rand(self.N_ic, 1) * self.L
+        t_ic = torch.zeros(self.N_ic, 1)
         u_ic = torch.sin(np.pi * x_ic)
         
         return x_ic.to(self.device), t_ic.to(self.device), u_ic.to(self.device)
@@ -245,9 +247,9 @@ class HeatEquationData:
                 - 'x_m', 't_m', 'u_m': Measurements
                 - 'measurement_info': Additional measurement metadata
         """
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Generating complete dataset...")
-        print("="*60)
+        print("=" * 60)
         
         # Generate all data
         x_f, t_f = self.generate_collocation_points(method=collocation_method)
@@ -299,7 +301,7 @@ class HeatEquationData:
         axes[0, 1].scatter(x_ic, t_ic, s=10, c='green', label='IC', alpha=0.5)
         axes[0, 1].set_xlabel('x')
         axes[0, 1].set_ylabel('t')
-        axes[0, 1].set_title('Boundary & Initial Conditions')
+        axes[0, 1].set_title(f'Boundary (N={len(x_bc)}) & Initial Conditions (N={len(x_ic)})')
         axes[0, 1].legend()
         axes[0, 1].grid(True, alpha=0.3)
         
@@ -337,9 +339,11 @@ if __name__ == "__main__":
         T=1.0,
         alpha=0.01,
         N_f=10000,
+        N_bc = 150,
+        N_ic = 100,
         N_sensors=10,
         N_time_measurements=10,
-        noise_level=0.01,
+        noise_level=0.05,
         device='cpu'
     )
     
