@@ -4,23 +4,22 @@ Training module for Physics-Informed Neural Networks
 Implements training loop with:
 - Adaptive loss weighting
 - Progress monitoring and visualization
+- LR scheduling
+- Dynamic switch from Adam to L-BFGS
 - Checkpointing
-- Early stopping
 
 Author: elphaim
-Date: January 19, 2026
+Date: January 23, 2026
 """
 
 import torch
 import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import time
 from pathlib import Path
 import json
-
-from models.heat_pinn import analytical_solution
 
 class PINNTrainer:
     """
@@ -30,8 +29,11 @@ class PINNTrainer:
         model: PINN model to train
         data: Dictionary containing all training data
         device: Device for computation ('cpu' or 'cuda')
-        learning_rate: Initial learning rate (default: 1e-3)
-        switch_threshold: Loss threshold after which optimizer is switched from Adam to L-BFGS (default: 1e-5)
+        learning_rate: Initial Adam learning rate (default: 1e-3)
+        reduce_lr_patience: Number of epochs to wait before dividing Adam LR by 2 (default: 100)
+        switch_window: Size of loss window over which to compute spread and slope (default: 200)
+        switch_var: condition on loss spread to switch from Adam to L-BFGS (default: 1e-3)
+        switch_slope: condition on loss slope to switch from Adam to L-BFGS (default: 1e-4)
         max_iter: Max iterations for L-BFGS (default: 500)
         track_gradient_norms: Compute gradients of loss functions at every epoch (default: False)
         adaptive_weights: Use adaptive loss weighting (default: False)
@@ -45,7 +47,10 @@ class PINNTrainer:
         data: Dict[str, torch.Tensor],
         device: str = 'cpu',
         learning_rate: float = 1e-3,
-        switch_threshold: float = 1e-5,
+        reduce_lr_patience: int = 100,
+        switch_window: int = 200,
+        switch_var: float = 1e-3,
+        switch_slope: float = 1e-3,
         max_iter: int = 500,
         track_gradient_norms: bool = False,
         adaptive_weights: bool = False,
@@ -55,15 +60,26 @@ class PINNTrainer:
         self.model = model.to(device)
         self.data = data
         self.device = device
-        self.switch_threshold = switch_threshold
+        self.switch_window = switch_window
+        self.switch_var = switch_var
+        self.switch_slope = switch_slope
         self.track_gradient_norms = track_gradient_norms
         self.adaptive_weights = adaptive_weights
         self.weight_update_freq = weight_update_freq
         self.weight_ema = weight_ema
         
         # Initialize optimizers
-        self.adam = optim.Adam(model.parameters(), lr=learning_rate)
-        self.lbfgs = optim.LBFGS(model.parameters(), max_iter=max_iter, line_search_fn='strong_wolfe')
+        self.adam = optim.Adam(model.parameters(), 
+                               lr=learning_rate)
+        self.lbfgs = optim.LBFGS(model.parameters(), 
+                                 max_iter=max_iter, 
+                                 line_search_fn='strong_wolfe')
+
+        # Initialize LR scheduler
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.adam, 
+                                                              factor=0.5, 
+                                                              patience=reduce_lr_patience,
+                                                              min_lr=1e-6)
         
         # Initialize loss weights
         self.lambda_f = 1.0
@@ -71,7 +87,7 @@ class PINNTrainer:
         self.lambda_ic = 1.0
         self.lambda_m = 1.0 if model.inverse else 0.0
 
-        # Running mean of gradient magnitudes for EMA
+        # Initialize running mean of gradient L2 norms for EMA
         self.grad_mean_f = None
         self.grad_mean_bc = None
         self.grad_mean_ic = None
@@ -93,7 +109,7 @@ class PINNTrainer:
         # alpha for inverse problem
         if model.inverse:
             self.history['alpha'] = []
-        # L2 norms of gradients
+        # L2 norms of gradients when tracked
         if track_gradient_norms:
             self.history['grad_norm_f'] = []
             self.history['grad_norm_bc'] = []
@@ -104,7 +120,7 @@ class PINNTrainer:
         print(f"Trainer initialized:")
         print(f"  Device: {device}")
         print(f"  Adam Learning rate: {learning_rate}")
-        print(f"  Switch threshold for L-BFGS: {switch_threshold}")
+        print(f"  Loss variation for L-BFGS switch: {switch_var}")
         print(f"  Tracking gradient L2 norms: {track_gradient_norms}")
         print(f"  Adaptive weights: {adaptive_weights}")
         if adaptive_weights:
@@ -171,7 +187,7 @@ class PINNTrainer:
             total_ic += g.norm()**2
         grad_norm_ic = torch.sqrt(total_ic)
 
-         # Measurement loss (inverse problem)
+        # Measurement loss (inverse problem)
         if self.model.inverse and 'x_m' in self.data:
             u_m_pred = self.model.forward(self.data['x_m'], self.data['t_m'])
             loss_m = torch.mean((u_m_pred - self.data['u_m']) ** 2)
@@ -202,8 +218,10 @@ class PINNTrainer:
         Compute adaptive loss weights using loss gradients
         
         Following Wang et al. (2021): λ = Tr[K] / Tr[K_component]
-        but NTK is computationally intensive so we use a proxy:
+        
+        NTK is computationally intensive so we use a proxy:
             λ_i = mean(||∇_θ L_i||_2) / ||∇_θ L_i||_2
+        along with EMA smoothing
         
         Returns:
             weights: Dictionary with updated lambda values
@@ -218,7 +236,7 @@ class PINNTrainer:
             self.grad_mean_ic = grads['grad_norm_ic']
             self.grad_mean_m = grads['grad_norm_m'] if self.model.inverse else 0.0
         else:
-            # Update with EMA: new = α·old + (1-α)·current
+            # Update with EMA: new = s * old + (1-s) * current
             self.grad_mean_f = self.weight_ema * self.grad_mean_f + (1 - self.weight_ema) * grads['grad_norm_f']
             self.grad_mean_bc = self.weight_ema * self.grad_mean_bc + (1 - self.weight_ema) * grads['grad_norm_bc']
             self.grad_mean_ic = self.weight_ema * self.grad_mean_ic + (1 - self.weight_ema) * grads['grad_norm_ic']
@@ -244,7 +262,7 @@ class PINNTrainer:
         }
     
     
-    def train_epoch(self, use_lbfgs: bool = False) -> Dict[str, float]:
+    def train_epoch(self, use_lbfgs: bool = False) -> Tuple[Dict[str, float], Optional[float]]:
         """
         Execute one training epoch.
 
@@ -289,8 +307,16 @@ class PINNTrainer:
             # Backward pass
             total_loss.backward()
             self.adam.step()
+            # LR scheduler
+            old_lr = self.adam.param_groups[0]["lr"]
+            self.scheduler.step(total_loss.item())
+            new_lr = self.adam.param_groups[0]["lr"]
+            if new_lr < old_lr:
+                print("\n" + "=" * 40)
+                print(f"Adam LR reduced: {old_lr:.2e} -> {new_lr:.2e}")
+                print("=" * 40)
 
-            return losses
+            return losses, new_lr
 
         if use_lbfgs:
             # Switch to L-BFGS
@@ -336,7 +362,7 @@ class PINNTrainer:
                     lambda_ic=self.lambda_ic,
                     lambda_m=self.lambda_m
                 )
-            return losses
+            return losses, None
                 
         
     def train(
@@ -384,17 +410,32 @@ class PINNTrainer:
                 self.lambda_m = weights['lambda_m']
             
             # Train one epoch
-            losses = self.train_epoch(use_lbfgs)
-            if losses['total'] < self.switch_threshold:
-                if not use_lbfgs:
-                    # Inform of the switch
-                    print("\n" + "=" * 30)
-                    print(f"Switching to L-BFGS at epoch {epoch}")
-                    print("=" * 30)
-                    lbfgs_epoch = epoch
-                use_lbfgs = True
-            
-            # Break 10 epochs after switch to L-BFGS for visualization
+            losses, lr = self.train_epoch(use_lbfgs)
+
+            # Switch to L-BFGS when loss spread gets below threshold
+            if len(self.history['total_loss']) > self.switch_window:
+                past_losses = self.history['total_loss'][-self.switch_window:]
+                # Percentile variation for flatness
+                p95_losses = np.percentile(past_losses, 95)
+                p5_losses = np.percentile(past_losses, 5)
+                var_ratio = (p95_losses - p5_losses) / p95_losses
+                plateau_detected = var_ratio < self.switch_var
+                # Slope variation (log-loss) for slow trend
+                t = np.arange(self.switch_window)
+                slope = np.polyfit(t, np.log(past_losses), 1)[0]
+                stagnation_detected = abs(slope) < self.switch_slope
+                # Use both to trigger L-BFGS
+                if plateau_detected and stagnation_detected:
+                    if not use_lbfgs:
+                        # Inform of the switch
+                        print("\n" + "=" * 40)
+                        print(f"Switching to L-BFGS at epoch {epoch}")
+                        print(f"  Variance ratio: {var_ratio:.6f} < {self.switch_var}")
+                        print(f"  Slope (log): |{slope:.6f}| < {self.switch_slope}")
+                        print("=" * 40)
+                        lbfgs_epoch = epoch
+                    use_lbfgs = True
+            # Break 10 epochs after switch to L-BFGS (for visualization)
             if use_lbfgs and epoch >= lbfgs_epoch + 10:
                 break
 
@@ -423,6 +464,7 @@ class PINNTrainer:
             if epoch % print_every == 0:
                 elapsed = time.time() - start_time
                 print(f"\nEpoch {epoch}/{epochs} ({elapsed:.1f}s)")
+                print(f"  Adam learning rate: {lr:.2e}")
                 print(f"  Total Loss: {losses['total']:.6e}")
                 print(f"  Residual: {losses['residual']:.6e} (λ={self.lambda_f:.2f})")
                 print(f"  Boundary: {losses['boundary']:.6e} (λ={self.lambda_bc:.2f})")
@@ -508,7 +550,7 @@ class PINNTrainer:
                     ax.plt(epochs, self.history['grad_norm_m'], 'm-', label='||∇L_m||_2', alpha=0.7)
                 ax.set_xlabel('Epoch')
                 ax.set_ylabel('Gradient L2 Norm')
-                ax.set_title('Loss landscape')
+                ax.set_title('Loss Landscape')
                 ax.legend()
                 ax.grid(True, alpha=0.3)
             else:
@@ -550,7 +592,7 @@ class PINNTrainer:
                     ax.plt(epochs, self.history['grad_norm_m'], 'm-', label='||∇L_m||_2', alpha=0.7)
                 ax.set_xlabel('Epoch')
                 ax.set_ylabel('Gradient L2 Norm')
-                ax.set_title('Loss landscape')
+                ax.set_title('Loss Landscape')
                 ax.legend()
                 ax.grid(True, alpha=0.3)
             else:
