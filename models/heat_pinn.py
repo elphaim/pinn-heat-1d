@@ -278,6 +278,8 @@ if __name__ == "__main__":
     print(f"Output shape: {u_pred.shape}")
     
     # Test residual computation
+    x_test = x_test.requires_grad_(True)
+    t_test = t_test.requires_grad_(True)
     residual = model_forward.residual(x_test, t_test)
     print(f"Residual shape: {residual.shape}")
     print(f"Residual mean before training: {residual.mean().item():.6f}")
