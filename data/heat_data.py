@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 
 from typing import Tuple, Dict, Optional
 
+
 class HeatEquationData:
     """
     Data generator for the 1D heat equation problem.
@@ -67,6 +68,12 @@ class HeatEquationData:
         # Set random seed for reproducibility
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
+
+        # Set default dtype for torch to float64 on CPU
+        if device == 'cpu':
+            torch.set_default_dtype(torch.float64)
+        else:
+            torch.set_default_dtype(torch.float32)
         
         print(f"Data Generator initialized:")
         print(f"  Domain: x ∈ [0, {L}], t ∈ [0, {T}]")
@@ -77,6 +84,7 @@ class HeatEquationData:
         print(f"  Measurements: {N_sensors} sensors × {N_time_measurements} times = {N_sensors * N_time_measurements} total")
         print(f"  Noise level: {noise_level:.1%} (SNR ≈ {-20*np.log10(noise_level):.0f} dB)")
     
+
     def analytical_solution(self, x: np.ndarray, t: np.ndarray) -> np.ndarray:
         """
         Analytical solution for u_t = alpha * u_xx with:
@@ -95,6 +103,7 @@ class HeatEquationData:
         """
         return np.sin(np.pi * x) * np.exp(-self.alpha * np.pi**2 * t)
     
+
     def generate_collocation_points(self, method: str = 'uniform') -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Generate collocation points for PDE residual evaluation.
@@ -114,12 +123,13 @@ class HeatEquationData:
             from scipy.stats import qmc
             sampler = qmc.LatinHypercube(d=2, rng=42)
             sample = sampler.random(n=self.N_f)
-            x_f = torch.tensor(sample[:, 0:1] * self.L, dtype=torch.float32)
-            t_f = torch.tensor(sample[:, 1:2] * self.T, dtype=torch.float32)
+            x_f = torch.tensor(sample[:, 0:1] * self.L, dtype=torch.float64 if self.device == 'cpu' else torch.float32)
+            t_f = torch.tensor(sample[:, 1:2] * self.T, dtype=torch.float64 if self.device == 'cpu' else torch.float32)
         else:
             raise ValueError(f"Unknown method: {method}")
         
         return x_f.to(self.device), t_f.to(self.device)
+    
     
     def generate_boundary_conditions(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -145,6 +155,7 @@ class HeatEquationData:
         
         return x_bc.to(self.device), t_bc.to(self.device), u_bc.to(self.device)
     
+    
     def generate_initial_conditions(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Generate initial condition points: u(x, 0) = sin(π*x)
@@ -159,6 +170,7 @@ class HeatEquationData:
         u_ic = torch.sin(np.pi * x_ic)
         
         return x_ic.to(self.device), t_ic.to(self.device), u_ic.to(self.device)
+    
     
     def generate_measurements(
         self, 
@@ -209,9 +221,9 @@ class HeatEquationData:
             snr_db = np.inf
         
         # Convert to torch tensors
-        x_m = torch.tensor(x_m_np.reshape(-1, 1), dtype=torch.float32)
-        t_m = torch.tensor(t_m_np.reshape(-1, 1), dtype=torch.float32)
-        u_m = torch.tensor(u_measured.reshape(-1, 1), dtype=torch.float32)
+        x_m = torch.tensor(x_m_np.reshape(-1, 1), dtype=torch.float64 if self.device == 'cpu' else torch.float32)
+        t_m = torch.tensor(t_m_np.reshape(-1, 1), dtype=torch.float64 if self.device == 'cpu' else torch.float32)
+        u_m = torch.tensor(u_measured.reshape(-1, 1), dtype=torch.float64 if self.device == 'cpu' else torch.float32)
         
         # Store metadata
         info = {
@@ -232,6 +244,7 @@ class HeatEquationData:
         
         return x_m.to(self.device), t_m.to(self.device), u_m.to(self.device), info
     
+
     def generate_full_dataset(
         self, 
         collocation_method: str = 'uniform'
@@ -267,6 +280,7 @@ class HeatEquationData:
         
         print("\nDataset generation complete.")
         return data
+    
     
     def visualize_data(self, data: Dict[str, torch.Tensor], save_path: Optional[str] = None):
         """
@@ -329,7 +343,10 @@ class HeatEquationData:
         plt.show()
 
 
-# Example usage and testing
+# ============================================================================
+# Usage Example and Testing
+# ============================================================================
+
 if __name__ == "__main__":
     print("Testing HeatEquationData class...\n")
     
