@@ -30,6 +30,7 @@ class HeatPINN(nn.Module):
         alpha_true: True value of thermal diffusivity (for forward problem)
         inverse: If True, treat alpha as learnable parameter
         alpha_init: Initial guess for alpha (used in inverse problem)
+        device: torch device (default: cpu)
     """
 
     def __init__(
@@ -38,10 +39,17 @@ class HeatPINN(nn.Module):
             alpha_true: Optional[float] = None,
             inverse: bool = False,
             alpha_init: float = 0.02,
+            device: str = 'cpu'
     ):
         super(HeatPINN, self).__init__()
 
         self.inverse = inverse
+
+        # Set default dtype for torch to float64 on CPU
+        if device == 'cpu':
+            torch.set_default_dtype(torch.float64)
+        else:
+            torch.set_default_dtype(torch.float32)
 
         # Build the neural network layers
         self.layers = nn.ModuleList()
@@ -54,14 +62,15 @@ class HeatPINN(nn.Module):
         # Handle the thermal diffusivity parameter
         if inverse:
             # For inverse problem: alpha is learnable
-            self.alpha = nn.Parameter(torch.tensor([alpha_init], dtype=torch.float32))
+            self.alpha = nn.Parameter(torch.tensor([alpha_init], dtype=torch.float64 if device == 'cpu' else torch.float32))
             print(f"Inverse problem mode: alpha initialized to {alpha_init}")
         else:
             # For forward problem: alpha is fixed
             if alpha_true is None:
                 raise ValueError("Must provide alpha_true for forward problem")
-            self.register_buffer('alpha', torch.tensor([alpha_true], dtype=torch.float32))
+            self.register_buffer('alpha', torch.tensor([alpha_true], dtype=torch.float64 if device == 'cpu' else torch.float32))
             print(f"Forward problem mode: alpha fixed to {alpha_true}")
+
 
     def _initialize_weights(self):
         """
@@ -71,6 +80,7 @@ class HeatPINN(nn.Module):
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_normal_(layer.weight)
                 nn.init.zeros_(layer.bias)
+
         
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
@@ -96,6 +106,7 @@ class HeatPINN(nn.Module):
         
         return u
     
+
     def residual(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Compute the PDE residual: u_t - alpha * u_xx
@@ -143,6 +154,7 @@ class HeatPINN(nn.Module):
         
         return residual
     
+    
     def loss_function(
         self,
         x_f: torch.Tensor,
@@ -162,7 +174,7 @@ class HeatPINN(nn.Module):
         lambda_m: float = 1.0
     ) -> Tuple[torch.Tensor, dict]:
         """
-        Compute total loss (MSE) for PINN training.
+        Compute loss functions (MSE) for PINN training.
         
         Args:
             x_f, t_f: Collocation points for PDE residual
@@ -213,6 +225,7 @@ class HeatPINN(nn.Module):
         
         return total_loss, losses
     
+    
     def predict(self, x: torch.Tensor, t: torch.Tensor) -> np.ndarray:
         """
         Predict temperature field at given points.
@@ -229,11 +242,13 @@ class HeatPINN(nn.Module):
             u = self.forward(x, t)
         return u.cpu().numpy()
     
+    
     def get_alpha(self) -> float:
         """
         Return current value of alpha parameter.
         """
         return self.alpha.item()
+    
     
 # Utility function for analytical solution (validation)
 def analytical_solution(x: np.ndarray, t: np.ndarray, alpha: float = 0.01) -> np.ndarray:
@@ -254,7 +269,11 @@ def analytical_solution(x: np.ndarray, t: np.ndarray, alpha: float = 0.01) -> np
     """
     return np.sin(np.pi * x) * np.exp(-alpha * np.pi**2 * t)
 
-# Example usage and testing
+
+# ============================================================================
+# Usage Example and Testing
+# ============================================================================
+
 if __name__ == "__main__":
     print("Testing HeatPINN implementation...\n")
     
