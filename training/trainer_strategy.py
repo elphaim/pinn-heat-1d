@@ -726,8 +726,6 @@ class StrategicPINNTrainer:
 # Complete Training Example
 # ============================================================================
 
-import sys
-sys.path.append('..')
 
 def train_comparison():
     """
