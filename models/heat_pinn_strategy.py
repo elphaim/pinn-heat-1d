@@ -293,6 +293,141 @@ class WeakFormLoss(LossStrategy):
         }
         
         return total_loss, losses
+    
+
+class MultiFidelityLoss(LossStrategy):
+    """
+    Multi-fidelity loss: combines high and low fidelity measurements
+    with uncertainty-based weighting.
+    
+    Required data keys:
+    - x_f, t_f: Collocation points
+    - x_bc, t_bc, u_bc: Boundary conditions
+    - x_ic, t_ic, u_ic: Initial conditions
+    - x_hf, t_hf, u_hf, sigma_hf: High-fidelity measurements
+    - x_lf, t_lf, u_lf, sigma_lf: Low-fidelity measurements
+    """
+    
+    def __init__(
+        self,
+        weighting: str = 'uncertainty',
+        lambda_hf: float = 1.0,
+        lambda_lf: float = 0.1,
+        device: str = 'cpu'
+    ):
+        """
+        Args:
+            weighting: 'uncertainty' (1/σ²) or 'fixed' (use lambda values)
+            lambda_hf: Weight for high-fidelity data (if weighting='fixed')
+            lambda_lf: Weight for low-fidelity data (if weighting='fixed')
+            device: 'cpu' or 'cuda'
+        """
+        self.weighting = weighting
+        self.lambda_hf = lambda_hf
+        self.lambda_lf = lambda_lf
+        self.device = device
+        
+        if device == 'cpu':
+            torch.set_default_dtype(torch.float64)
+        else:
+            torch.set_default_dtype(torch.float32)
+        
+        print(f"MultiFidelityLoss initialized:")
+        print(f"  Weighting: {weighting}")
+        if weighting == 'fixed':
+            print(f"  λ_hf: {lambda_hf}, λ_lf: {lambda_lf}")
+    
+    def compute_loss(
+        self,
+        model: HeatPINN,
+        data: dict,
+        lambdas: dict[str, float]
+    ) -> tuple[torch.Tensor, dict]:
+        """
+        Multi-fidelity loss computation.
+        """
+        # Extract collocation points
+        x_f = data['x_f'].requires_grad_(True)
+        t_f = data['t_f'].requires_grad_(True)
+        
+        # 1. PDE residual loss
+        residual = model.residual(x_f, t_f)
+        loss_f = torch.mean(residual ** 2)
+        
+        # 2. Boundary loss
+        u_bc_pred = model.forward(data['x_bc'], data['t_bc'])
+        loss_bc = torch.mean((u_bc_pred - data['u_bc']) ** 2)
+        
+        # 3. Initial condition loss
+        u_ic_pred = model.forward(data['x_ic'], data['t_ic'])
+        loss_ic = torch.mean((u_ic_pred - data['u_ic']) ** 2)
+        
+        # 4. High-fidelity measurement loss
+        u_hf_pred = model.forward(data['x_hf'], data['t_hf'])
+        residuals_hf = u_hf_pred - data['u_hf']
+        
+        # 5. Low-fidelity measurement loss
+        u_lf_pred = model.forward(data['x_lf'], data['t_lf'])
+        residuals_lf = u_lf_pred - data['u_lf']
+        
+        # Compute weighted measurement losses
+        if self.weighting == 'uncertainty':
+            sigma_hf = data.get('sigma_hf', 0.01)
+            sigma_lf = data.get('sigma_lf', 0.1)
+            
+            # Inverse variance weighting
+            loss_hf = torch.mean(residuals_hf ** 2) / (sigma_hf ** 2)
+            loss_lf = torch.mean(residuals_lf ** 2) / (sigma_lf ** 2)
+            
+            # Normalize so weights are interpretable
+            # (otherwise scale depends on sigma values)
+            weight_sum = 1.0 / sigma_hf**2 + 1.0 / sigma_lf**2
+            loss_hf = loss_hf / weight_sum
+            loss_lf = loss_lf / weight_sum
+            
+            effective_lambda_hf = (1.0 / sigma_hf**2) / weight_sum
+            effective_lambda_lf = (1.0 / sigma_lf**2) / weight_sum
+        else:
+            loss_hf = torch.mean(residuals_hf ** 2)
+            loss_lf = torch.mean(residuals_lf ** 2)
+            effective_lambda_hf = self.lambda_hf
+            effective_lambda_lf = self.lambda_lf
+        
+        # Combined measurement loss
+        if self.weighting == 'fixed':
+            loss_m = self.lambda_hf * loss_hf + self.lambda_lf * loss_lf
+        else:
+            loss_m = loss_hf + loss_lf  # Already weighted by 1/σ²
+        
+        # Total loss
+        total_loss = (
+            lambdas.get('f', 1.0) * loss_f +
+            lambdas.get('bc', 1.0) * loss_bc +
+            lambdas.get('ic', 1.0) * loss_ic +
+            lambdas.get('m', 1.0) * loss_m
+        )
+        
+        losses = {
+            'total': total_loss.item(),
+            'residual': loss_f.item(),
+            'boundary': loss_bc.item(),
+            'initial': loss_ic.item(),
+            'measurement': loss_m.item(),
+            'measurement_hf': loss_hf.item(),
+            'measurement_lf': loss_lf.item(),
+            'effective_lambda_hf': effective_lambda_hf,
+            'effective_lambda_lf': effective_lambda_lf,
+            'n_hf': data['x_hf'].shape[0],
+            'n_lf': data['x_lf'].shape[0],
+            # Tensors for gradient tracking
+            'total_t': total_loss,
+            'residual_t': loss_f,
+            'boundary_t': loss_bc,
+            'initial_t': loss_ic,
+            'measurement_t': loss_m
+        }
+        
+        return total_loss, losses
 
 
 # ============================================================================
@@ -361,11 +496,9 @@ class StrategicPINN(HeatPINN):
 
 
 # ============================================================================
-# Usage Example
+# Usage Example and Testing
 # ============================================================================
 
-import sys
-sys.path.append('..')
 
 def example_usage():
     """Demonstrate strategy pattern."""
@@ -456,11 +589,36 @@ def example_usage():
     grad_norms = [p.grad.norm().item() for p in model.parameters() if p.grad is not None]
     print(f"Gradient norms: min={min(grad_norms):.2e}, max={max(grad_norms):.2e}")
     print("Gradients flow correctly.")
+
+    # Test multi-fidelity
+    print("\n" + "="*70)
+    print("Test 4: Multi-fidelity")
+    print("="*70)
     
+    # Switch to multi-fidelity mode
+    model.set_loss_strategy(
+        MultiFidelityLoss(
+            weighting='uncertainty',
+            lambda_hf=1.0,
+            lambda_lf=0.1,
+            device='cpu'
+        )
+    )
+
+    # Prepare multi-fidelity data
+    from data.heat_data import prepare_multi_fidelity_data
+
+    mf_data = prepare_multi_fidelity_data(data_gen)
+
+    loss_mf, losses_mf = model.compute_loss(mf_data)
+    print(f"\nMulti-fidelity loss: {loss_mf.item():.6e}")
+    print(f"  Residual: {losses_mf['residual']:.6e}")
+    print(f"  HF measurements: {losses_mf['measurement_hf']}")
+    print(f"  LF measurements: {losses_mf['measurement_lf']}")
+
     print("\n" + "="*70)
     print("Strategy Pattern Working.")
     print("="*70)
-
 
 if __name__ == "__main__":
     example_usage()
