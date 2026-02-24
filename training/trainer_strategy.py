@@ -657,7 +657,7 @@ class StrategicPINNTrainer:
             ax.plot(epochs, self.history['grad_norm_bc'], 'r-', label='||∇L_bc|_2', alpha=0.7)
             ax.plot(epochs, self.history['grad_norm_ic'], 'g-', label='||∇L_ic||_2', alpha=0.7)
             if self.model.inverse:
-                ax.plt(epochs, self.history['grad_norm_m'], 'm-', label='||∇L_m||_2', alpha=0.7)
+                ax.plot(epochs, self.history['grad_norm_m'], 'm-', label='||∇L_m||_2', alpha=0.7)
             ax.set_xlabel('Epoch')
             ax.set_ylabel('Gradient L2 Norm')
             ax.set_title('Loss Landscape')
