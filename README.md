@@ -10,9 +10,9 @@ PINNs embed PDE constraints directly into the neural network loss function, but 
 
 The benchmark solves:
 
-$$u_t = \alpha \, u_{xx}, \quad x \in [0, 1],\; t \in [0, T]$$
+$$u_t = \alpha  u_{xx}, \quad x \in [0, 1], t \in [0, T]$$
 
-with initial condition $u(x, 0) = \sin(\pi x)$ and homogeneous Dirichlet boundary conditions. The analytical solution $u(x,t) = \sin(\pi x)\,e^{-\alpha \pi^2 t}$ enables exact error quantification.
+with initial condition $u(x, 0) = \sin(\pi x)$ and homogeneous Dirichlet boundary conditions. The analytical solution $u(x,t) = \sin(\pi x) e^{-\alpha \pi^2 t}$ enables exact error quantification.
 
 ## Key Features
 
