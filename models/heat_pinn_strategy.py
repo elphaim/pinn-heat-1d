@@ -109,8 +109,8 @@ class StrongFormLoss(LossStrategy):
             u_m_pred = model.forward(data['x_m'], data['t_m'])
             loss_m = torch.mean((u_m_pred - data['u_m']) ** 2)
         else:
-            loss_m = torch.tensor(0.0)
-        
+            loss_m = torch.zeros(1, dtype=data['x_f'].dtype, device=data['x_f'].device).squeeze()
+
         # Total loss
         total_loss = (
             lambdas.get('f', 1.0) * loss_f +
@@ -118,13 +118,13 @@ class StrongFormLoss(LossStrategy):
             lambdas.get('ic', 1.0) * loss_ic +
             lambdas.get('m', 1.0) * loss_m
         )
-        
+
         losses = {
             'total': total_loss.item(),
             'residual': loss_f.item(),
             'boundary': loss_bc.item(),
             'initial': loss_ic.item(),
-            'measurement': loss_m.item() if torch.is_tensor(loss_m) else 0.0,
+            'measurement': loss_m.item(),
             # also record full tensors for loss gradient tracking
             'total_t': total_loss,
             'residual_t': loss_f,
@@ -132,7 +132,7 @@ class StrongFormLoss(LossStrategy):
             'initial_t': loss_ic,
             'measurement_t': loss_m
         }
-        
+
         return total_loss, losses
 
 
@@ -262,8 +262,8 @@ class WeakFormLoss(LossStrategy):
             u_m_pred = model.forward(data['x_m'], data['t_m'])
             loss_m = torch.mean((u_m_pred - data['u_m']) ** 2)
         else:
-            loss_m = torch.tensor(0.0)
-        
+            loss_m = torch.zeros(1, dtype=data['x_bc'].dtype, device=data['x_bc'].device).squeeze()
+
         # Total loss
         total_loss = (
             lambdas.get('f', 1.0) * loss_f +
@@ -271,16 +271,16 @@ class WeakFormLoss(LossStrategy):
             lambdas.get('ic', 1.0) * loss_ic +
             lambdas.get('m', 1.0) * loss_m
         )
-        
+
         # Diagnostics
         nonzero = (weak_residuals_tensor.abs() > 1e-8).sum().item()
-        
+
         losses = {
             'total': total_loss.item(),
             'residual': loss_f.item(),
             'boundary': loss_bc.item(),
             'initial': loss_ic.item(),
-            'measurement': loss_m.item() if torch.is_tensor(loss_m) else 0.0,
+            'measurement': loss_m.item(),
             'weak_res_nonzero': nonzero,
             'weak_res_mean': weak_residuals_tensor.mean().item(),
             'weak_res_std': weak_residuals_tensor.std().item(),

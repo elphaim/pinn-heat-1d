@@ -204,7 +204,7 @@ class HeatPINN(nn.Module):
             u_m_pred = self.forward(x_m, t_m)
             loss_m = torch.mean((u_m_pred - u_m) ** 2)
         else:
-            loss_m = torch.tensor(0.0)
+            loss_m = torch.zeros(1, dtype=x_f.dtype, device=x_f.device).squeeze()
         
         # Total weighted loss
         total_loss = (
@@ -220,7 +220,7 @@ class HeatPINN(nn.Module):
             'residual': loss_f.item(),
             'boundary': loss_bc.item(),
             'initial': loss_ic.item(),
-            'measurement': loss_m.item() if torch.is_tensor(loss_m) else 0.0,
+            'measurement': loss_m.item(),
         }
         
         return total_loss, losses

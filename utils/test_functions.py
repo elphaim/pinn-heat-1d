@@ -59,7 +59,7 @@ def generate_compact_gaussians(
     Generates a list of 2D compactly supported Gaussian test functions
     
     Args:
-        L: Length of spatial domain, must be odd (default: 1.0)
+        L: Length of spatial domain (default: 1.0)
         T: Final time (default: 1.0)
         n_funcs: Number of test functions to be generated (default: 10)
         support_radius: Radius outside of which the function vanishes (default: min(L/5, T/5))
@@ -298,7 +298,8 @@ def plot_compact_gaussians(
     plt.colorbar(label="Σ φ(x,t)")
     plt.xlabel("x")
     plt.ylabel("t")
-    plt.title(f"All compact Gaussians {"and support domains" if show_support else ""}")
+    support_label = "and support domains" if show_support else ""
+    plt.title(f"All compact Gaussians {support_label}")
     plt.tight_layout()
 
     if save_path:

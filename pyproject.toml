@@ -25,6 +25,7 @@ notebooks = [
 
 [tool.setuptools.packages.find]
 where = ["."]
+exclude = ["archive*", "experiments*", "notebooks*", "tests*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

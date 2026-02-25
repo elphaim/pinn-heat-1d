@@ -504,7 +504,7 @@ class StrategicPINNTrainer:
                 
                 if self.model.inverse:
                     print(f"  Measurement: {losses['measurement']:.6e} (λ={self.lambda_m:.2f})")
-                    print(f"  Alpha: {self.model.get_alpha():.6f} (true: 0.01)")
+                    print(f"  Alpha: {self.model.get_alpha():.6f}")
                 
                 # Strategy-specific info
                 if 'weak_res_nonzero' in losses:
@@ -654,7 +654,7 @@ class StrategicPINNTrainer:
 
         def plot_grad_norms(ax):
             ax.plot(epochs, self.history['grad_norm_f'], 'b-', label='||∇L_f||_2', alpha=0.7)
-            ax.plot(epochs, self.history['grad_norm_bc'], 'r-', label='||∇L_bc|_2', alpha=0.7)
+            ax.plot(epochs, self.history['grad_norm_bc'], 'r-', label='||∇L_bc||_2', alpha=0.7)
             ax.plot(epochs, self.history['grad_norm_ic'], 'g-', label='||∇L_ic||_2', alpha=0.7)
             if self.model.inverse:
                 ax.plot(epochs, self.history['grad_norm_m'], 'm-', label='||∇L_m||_2', alpha=0.7)
@@ -706,9 +706,11 @@ class StrategicPINNTrainer:
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         
+        # Save the optimizer that was last active
+        active_optimizer = self.lbfgs if 'lbfgs' in self.history['optimizer'] else self.adam
         checkpoint = {
             'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.lbfgs.state_dict(),
+            'optimizer_state_dict': active_optimizer.state_dict(),
             'history': self.history,
             'final_alpha': self.model.get_alpha() if self.model.inverse else None
         }

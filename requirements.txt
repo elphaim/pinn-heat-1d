@@ -1,4 +1,11 @@
-# Core
+# Install the project with all dependencies (defined in pyproject.toml).
+# For a plain install:
+#   pip install -e .
+# For development (includes pytest):
+#   pip install -e ".[test]"
+#
+# This file pins the direct runtime dependencies for reproducibility.
+# Generated from pyproject.toml — keep in sync with [project].dependencies.
 torch>=2.0
 numpy
 matplotlib

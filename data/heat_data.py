@@ -29,7 +29,7 @@ class HeatEquationData:
     BC: u(0, t) = u(L, t) = 0
     
     Args:
-        L: Length of spatial domain, must be odd (default: 1.0)
+        L: Length of spatial domain (default: 1.0)
         T: Final time (default: 1.0)
         alpha: True thermal diffusivity (default: 0.01)
         N_f: Number of collocation points for residual (default: 10000)
@@ -65,10 +65,12 @@ class HeatEquationData:
         self.N_time_measurements = N_time_measurements
         self.noise_level = noise_level
         self.device = device
-        
-        # Set random seed for reproducibility
-        torch.manual_seed(random_seed)
-        np.random.seed(random_seed)
+        self.random_seed = random_seed
+
+        # Per-instance RNG — avoids global state pollution when multiple
+        # HeatEquationData objects are created with the same seed.
+        self.rng = torch.Generator().manual_seed(random_seed)
+        self.np_rng = np.random.default_rng(random_seed)
 
         # Set default dtype for torch to float64 on CPU
         if device == 'cpu':
@@ -117,12 +119,12 @@ class HeatEquationData:
             t_f: Temporal coordinates, shape (N_f, 1)
         """
         if method == 'uniform':
-            x_f = torch.rand(self.N_f, 1) * self.L
-            t_f = torch.rand(self.N_f, 1) * self.T
+            x_f = torch.rand(self.N_f, 1, generator=self.rng) * self.L
+            t_f = torch.rand(self.N_f, 1, generator=self.rng) * self.T
         elif method == 'lhs':
             # Latin Hypercube Sampling for better space-filling
             from scipy.stats import qmc
-            sampler = qmc.LatinHypercube(d=2, rng=42)
+            sampler = qmc.LatinHypercube(d=2, seed=self.random_seed)
             sample = sampler.random(n=self.N_f)
             dtype = torch.float64 if self.device == 'cpu' else torch.float32
             x_f = torch.tensor(sample[:, 0:1] * self.L, dtype=dtype)
@@ -143,11 +145,11 @@ class HeatEquationData:
             u_bc: Boundary values (all zeros)
         """
         # Left boundary (x=0)
-        t_left = torch.rand(self.N_bc, 1) * self.T
+        t_left = torch.rand(self.N_bc, 1, generator=self.rng) * self.T
         x_left = torch.zeros(self.N_bc, 1)
-        
+
         # Right boundary (x=L)
-        t_right = torch.rand(self.N_bc, 1) * self.T
+        t_right = torch.rand(self.N_bc, 1, generator=self.rng) * self.T
         x_right = torch.ones(self.N_bc, 1) * self.L
         
         # Combine
@@ -167,7 +169,7 @@ class HeatEquationData:
             t_ic: Temporal coordinates (all zeros)
             u_ic: Initial values
         """
-        x_ic = torch.rand(self.N_ic, 1) * self.L
+        x_ic = torch.rand(self.N_ic, 1, generator=self.rng) * self.L
         t_ic = torch.zeros(self.N_ic, 1)
         u_ic = torch.sin(np.pi * x_ic)
         
@@ -211,7 +213,7 @@ class HeatEquationData:
         
         # Add noise
         if add_noise:
-            noise = np.random.normal(0, self.noise_level * np.abs(u_true))
+            noise = self.np_rng.normal(0, self.noise_level * np.abs(u_true))
             u_measured = u_true + noise
             
             # Compute actual SNR
@@ -354,13 +356,13 @@ class HeatEquationData:
         
         # Subsample if requested
         if N_samples is not None and N_samples < len(x_all):
-            indices = np.random.choice(len(x_all), N_samples, replace=False)
+            indices = self.np_rng.choice(len(x_all), N_samples, replace=False)
             x_all = x_all[indices]
             t_all = t_all[indices]
             u_all = u_all[indices]
-        
+
         # Add noise
-        noise = np.random.normal(0, noise_level * np.abs(u_all).mean(), size=u_all.shape)
+        noise = self.np_rng.normal(0, noise_level * np.abs(u_all).mean(), size=u_all.shape)
         u_noisy = u_all + noise
         
         # Compute error vs analytical solution
