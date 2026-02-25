@@ -96,3 +96,7 @@ This is an active personal project. The 1D heat equation serves as a validation 
 
 - Raissi, M., Perdikaris, P., Karniadakis, G.E. (2019). *Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations.* Journal of Computational Physics, 378, 686–707.
 - Wang, S., Teng, Y., Perdikaris, P. (2021). *Understanding and mitigating gradient flow pathologies in physics-informed neural networks.* SIAM Journal on Scientific Computing, 43(5), A3055–A3081.
+
+## Licence
+
+MIT
